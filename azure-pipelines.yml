@@ -1,0 +1,72 @@
+trigger:
+- main
+
+pool:
+  vmImage: 'ubuntu-latest'  # Troque para 'windows-latest' se preferir
+
+variables:
+  NODE_ENV: 'production'
+  BUILD_ARTIFACT_NAME: 'drop'
+  BUILD_ARTIFACT_PATH: '$(Build.ArtifactStagingDirectory)/drop.zip'
+  NPM_REGISTRY: 'https://pkgs.dev.azure.com/ticketagora/TicketAgora/_packaging/ds-ts/npm/registry/'
+  NPM_PUBLIC_REGISTRY: 'https://registry.npmjs.org/'
+
+steps:
+- task: NodeTool@0
+  inputs:
+    versionSource: 'spec'
+    versionSpec: '18.x'
+    checkLatest: true
+
+- script: |
+    echo "registry=${NPM_REGISTRY}" > ~/.npmrc
+    echo "//pkgs.dev.azure.com/ticketagora/TicketAgora/_packaging/ds-ts/npm/registry/:username=${NPM_USERNAME}" >> ~/.npmrc
+    echo "//pkgs.dev.azure.com/ticketagora/TicketAgora/_packaging/ds-ts/npm/registry/:_password=$(echo -n ${NPM_TOKEN} | base64)" >> ~/.npmrc
+    echo "//pkgs.dev.azure.com/ticketagora/TicketAgora/_packaging/ds-ts/npm/registry/:email=${NPM_EMAIL}" >> ~/.npmrc
+    echo "always-auth=true" >> ~/.npmrc
+    echo "registry=${NPM_PUBLIC_REGISTRY}" >> ~/.npmrc
+    cat ~/.npmrc
+  displayName: 'Configure .npmrc'
+  env:
+    NPM_TOKEN: $(NPM_TOKEN)
+    NPM_USERNAME: $(NPM_USERNAME)
+    NPM_EMAIL: $(NPM_EMAIL)
+
+- script: |
+    npm install
+  displayName: 'Install dependencies'
+  env:
+    NODE_ENV: $(NODE_ENV)
+
+- script: |
+    npm run build
+  displayName: 'Build project'
+
+- script: |
+    mkdir -p $(Build.ArtifactStagingDirectory)/build
+    cp -R .next $(Build.ArtifactStagingDirectory)/build
+    cp -R public $(Build.ArtifactStagingDirectory)/build
+    cp -R package.json $(Build.ArtifactStagingDirectory)/build
+  displayName: 'Copy build artifacts'
+
+- task: ArchiveFiles@2
+  inputs:
+    rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/build'
+    includeRootFolder: false
+    archiveType: 'zip'
+    archiveFile: '$(BUILD_ARTIFACT_PATH)'
+    replaceExistingArchive: true
+  displayName: 'Archive build artifacts'
+
+- task: PublishPipelineArtifact@1
+  inputs:
+    targetPath: '$(BUILD_ARTIFACT_PATH)'
+    artifact: '$(BUILD_ARTIFACT_NAME)'
+  displayName: 'Publish build artifact'
+
+- script: |
+    npm version patch
+    npm publish --registry $(NPM_REGISTRY)
+  displayName: 'Version and publish package'
+  env:
+    NODE_AUTH_TOKEN: $(NPM_TOKEN)
